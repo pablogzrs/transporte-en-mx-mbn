@@ -10,7 +10,7 @@ library(bnlearn)
 
 ```{r}
 # Cargar los datos
-data <- read.csv("../Data//modelo_a.csv", row.names = 1,
+data <- read.csv("modelo_a.csv", row.names = 1,
                  na.strings = c("", "NA"), stringsAsFactors = TRUE,
                  fileEncoding = "UTF-8")
 head(data)
@@ -63,6 +63,66 @@ wl <- data.frame(
 dag <- hc(data, blacklist = bl, whitelist = wl)
 graphviz.plot(dag)
 ```
+
+```{r}
+arc.strength(dag,data = data, criterion = "mi")
+```
+```{r}
+score(dag, data = data, type = "bic")
+```
+
+
+```{r}
+score(dag, data = data, type = "aic")
+```
+
+```{r}
+best_dag = hc(data)
+```
+
+
+```{r}
+graphviz.plot(best_dag)
+```
+```{r}
+score(best_dag, data = data, type = "bic")
+```
+```{r}
+score(best_dag, data = data, type = "aic")
+```
+
+
+```{r}
+capas_cautiv <- list(
+  c("sexo","edad","region","tam_loc","tiene_sistema_tren"),
+  c("escolaridad"),
+  c("condicion_actividad","ingreso_familiar"),
+  c("tiene_auto"),
+  c("modo_usado"),
+  c("tp_eficiente","tp_rapido","tp_barato","tp_seguro","tp_comodo",
+    "contamina_su_modo","contamina_aire")
+)
+bl_c <- as.data.frame(tiers2blacklist(capas_cautiv), stringsAsFactors = FALSE)
+
+# el cuello de botella: nada socioeconómico llega directo a modo ni a percepciones
+nse   <- c("escolaridad","condicion_actividad","ingreso_familiar")
+aguas <- c("modo_usado","tp_eficiente","tp_rapido","tp_barato",
+           "tp_seguro","tp_comodo")
+bl_cuello <- expand.grid(from = nse, to = aguas, stringsAsFactors = FALSE)
+
+bl_c <- rbind(bl_c, bl_t1, bl_cuello)   # bl_t1 se reutiliza del modelo base
+
+wl_c <- data.frame(
+  from = c("tiene_auto","tiene_auto","tiene_auto","sexo","modo_usado"),
+  to   = c("modo_usado","tp_eficiente","tp_seguro","tp_seguro","contamina_su_modo"),
+  stringsAsFactors = FALSE
+)
+
+dag_cautiv <- hc(data, blacklist = bl_c, whitelist = wl_c)
+graphviz.plot(dag_cautiv)
+score(dag_cautiv, data = data, type = "bic")
+```
+
 
 
 

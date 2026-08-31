@@ -1,7 +1,16 @@
 ---
-title: "mbn"
-format: html
+title: "Percepción del transporte público en México"
+subtitle: "Análisis de métodos de razonamiento e incertidumbre"
+format: 
+    html:
+        fontsize: 1.25em
+        html-math-method: katex
+        embed-resources: true
+        self-contained-math: true
+        df-print: kable
+editor: source
 ---
+
 
 ```{r}
 # Librerías necesarias
@@ -10,7 +19,7 @@ library(bnlearn)
 
 ```{r}
 # Cargar los datos
-data <- read.csv("../Data//modelo_a.csv", row.names = 1,
+data <- read.csv("modelo_a.csv", row.names = 1,
                  na.strings = c("", "NA"), stringsAsFactors = TRUE,
                  fileEncoding = "UTF-8")
 head(data)
@@ -50,7 +59,7 @@ bl_bat <- expand.grid(from=bateria, to=bateria, stringsAsFactors=FALSE)
 bl_bat <- bl_bat[bl_bat$from != bl_bat$to, ]
 
 bl <- rbind(bl_capas, bl_t1, bl_bat)
-nrow(bl)
+nrow(bl) 
 ```
 ```{r}
 wl <- data.frame(
@@ -65,14 +74,108 @@ graphviz.plot(dag)
 ```
 
 ```{r}
-best_dag = hc(data)
-graphviz.plot(best_dag, shape = "ellipse")
+arc.strength(dag,data = data, criterion = "mi")
 ```
 ```{r}
 score(dag, data = data, type = "bic")
-score(dag, data = data, type = "aic")
 ```
 
 
+```{r}
+score(dag, data = data, type = "aic")
+```
+
+```{r}
+best_dag = hc(data)
+```
 
 
+```{r}
+graphviz.plot(best_dag)
+```
+```{r}
+score(best_dag, data = data, type = "bic")
+```
+```{r}
+score(best_dag, data = data, type = "aic")
+```
+
+
+```{r}
+capas_cautiv <- list(
+  c("sexo","edad","region","tam_loc","tiene_sistema_tren"),
+  c("escolaridad"),
+  c("condicion_actividad","ingreso_familiar"),
+  c("tiene_auto"),
+  c("modo_usado"),
+  c("tp_eficiente","tp_rapido","tp_barato","tp_seguro","tp_comodo",
+    "contamina_su_modo","contamina_aire")
+)
+bl_c <- as.data.frame(tiers2blacklist(capas_cautiv), stringsAsFactors = FALSE)
+
+# el cuello de botella: nada socioeconómico llega directo a modo ni a percepciones
+nse   <- c("escolaridad","condicion_actividad","ingreso_familiar")
+aguas <- c("modo_usado","tp_eficiente","tp_rapido","tp_barato",
+           "tp_seguro","tp_comodo")
+bl_cuello <- expand.grid(from = nse, to = aguas, stringsAsFactors = FALSE)
+
+bl_c <- rbind(bl_c, bl_t1, bl_cuello)   # bl_t1 se reutiliza del modelo base
+
+wl_c <- data.frame(
+  from = c("tiene_auto","tiene_auto","tiene_auto","sexo","modo_usado"),
+  to   = c("modo_usado","tp_eficiente","tp_seguro","tp_seguro","contamina_su_modo"),
+  stringsAsFactors = FALSE
+)
+
+dag_cautiv <- hc(data, blacklist = bl_c, whitelist = wl_c)
+graphviz.plot(dag_cautiv)
+score(dag_cautiv, data = data, type = "bic")
+```
+
+```{r}
+bn = bn.fit(dag, data =data, method = "mle")
+```
+
+
+## Primera Query
+# ¿Aquellas personas que utilizan cotidianamente el tren urbano lo perciben más cómodo de aquellas que utilizan cotidianamente el camión o microbús?
+
+```{r}
+set.seed(67)
+cpquery(bn, event = (tp_comodo == "comodo"), evidence = (modo_usado == "masivo"), n = 10^6)
+cpquery(bn, event = (tp_comodo == "comodo"), evidence = (modo_usado == "concesionado"), n = 10^6)
+```
+
+*Se ve una diferencia significante entre como se califica la comodidad del transporte publico entre la gente que usa el tren (masivo) y la gente que usa camiones o microbuses (concesionado). La probabilidad de que una persona que viaja en tren califique al transporte publico como comodo es del 0.325, mientras que para los de camión o microbus es de 0.452*
+
+
+## Segunda Query
+# ¿La percepción de seguridad en el transporte público difiere entre hombres y mujeres?
+
+```{r}
+cpquery(bn, event = (tp_seguro == "seguro"), evidence = (sexo == "hombre"), n = 10^6)
+cpquery(bn, event = (tp_seguro == "seguro"), evidence = (sexo == "mujer"), n = 10^6)
+```
+
+*Vemos que hay una pequeña diferencia entre la probabildad de que un hombre considere que el transporte público sea seguro y la que una mujer lo considere seguro. La probabilidad de que un hombre considere el transporte seguro es ligeramente más alta, aproximadamente 0.446 comparado al 0.447 de las mujeres*
+
+
+## Tercera Query
+# ¿Quién tiene auto propio percibe su transporte como menos contaminante que quien no lo tiene?
+
+```{r}
+cpquery(bn, event = (contamina_su_modo == "no_contamina" | contamina_su_modo == "poco"), evidence = (tiene_auto == "si"), n = 10^6)
+```
+```{r}
+cpquery(bn, event = (contamina_su_modo == "no_contamina" | contamina_su_modo == "poco"), evidence = (tiene_auto == "no"), n = 10^6)
+```
+*La probabilidad de percibir su transporte como menos contaminante de las personas que tienen auto es 0.49 y de las personas que no tienen auto es de 0.41.Por lo que, las personas que tienen auto perciben su transporte como menos contaminante*
+
+
+## Cuarta Query
+# ¿Cuál es la probabilidad de que una persona en localidades entre 2,500 y 14,999 habitantes considere que el transporte público es eficiente y seguro?
+
+```{r}
+cpquery(bn, event = (tp_eficiente == "eficiente") & (tp_seguro == "seguro"), evidence = (tam_loc == "2500_14999"), n = 10^6)
+```
+*La probabilidad de que una persona en localidades entre 2,500 y 14,999 habitantes considere el transporte público eficiente y seguro es de 0.33. Por lo que, en poblaciones entre 2,500 y 14,999 habitantes 1 de cada 3 personas cree que su transporte público es seguro y eficiente*

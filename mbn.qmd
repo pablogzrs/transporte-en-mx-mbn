@@ -1,0 +1,69 @@
+---
+title: "mbn"
+format: html
+---
+
+```{r}
+# Librerías necesarias
+library(bnlearn)
+```
+
+```{r}
+# Cargar los datos
+data <- read.csv("../Data//modelo_a.csv", row.names = 1,
+                 na.strings = c("", "NA"), stringsAsFactors = TRUE,
+                 fileEncoding = "UTF-8")
+head(data)
+```
+```{r}
+col4 <- c(masivo="masivo", camion="concesionado", colectivo="concesionado",
+          particular="particular", demanda="otro", activo="otro",
+          otros="otro", ninguno="otro")
+
+data$modo_usado <- factor(col4[as.character(data$modo_principal)],
+                     levels = c("masivo","concesionado","particular","otro"))
+data$modo_principal <- NULL
+
+table(data$modo4)
+```
+```{r}
+capas <- list(
+  c("sexo","edad","region","tam_loc","tiene_sistema_tren"),
+  c("escolaridad"),
+  c("condicion_actividad","ingreso_familiar"),
+  c("tiene_auto"),
+  c("modo_usado"),
+  c("tp_eficiente","tp_rapido","tp_barato","tp_seguro","tp_comodo",
+    "contamina_su_modo","contamina_aire")
+)
+
+bl_capas <- as.data.frame(tiers2blacklist(capas), stringsAsFactors = FALSE)
+
+tier1 <- capas[[1]]
+bl_t1 <- expand.grid(from=tier1, to=tier1, stringsAsFactors=FALSE)
+bl_t1 <- bl_t1[bl_t1$from != bl_t1$to, ]
+bl_t1 <- bl_t1[!(bl_t1$from %in% c("region","tam_loc") &
+                 bl_t1$to == "tiene_sistema_tren"), ]
+
+bateria <- c("tp_eficiente","tp_rapido","tp_barato","tp_seguro","tp_comodo")
+bl_bat <- expand.grid(from=bateria, to=bateria, stringsAsFactors=FALSE)
+bl_bat <- bl_bat[bl_bat$from != bl_bat$to, ]
+
+bl <- rbind(bl_capas, bl_t1, bl_bat)
+nrow(bl)
+```
+```{r}
+wl <- data.frame(
+  from = c("modo_usado", "modo_usado", "tiene_auto", "tam_loc", "sexo", "contamina_aire"),
+  to   = c("tp_comodo", "contamina_su_modo", "modo_usado", "tp_eficiente",
+           "tp_seguro", "contamina_su_modo"),
+  stringsAsFactors = FALSE
+)
+
+dag <- hc(data, blacklist = bl, whitelist = wl)
+graphviz.plot(dag)
+```
+
+
+
+

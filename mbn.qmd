@@ -136,5 +136,26 @@ score(dag_cautiv, data = data, type = "bic")
 bn = bn.fit(dag, data =data, method = "mle")
 ```
 
+```{r}
+set.seed(67)
+```
+
+## Tercera Query
+# ¿Quién tiene auto propio percibe su transporte como menos contaminante que quien no lo tiene?
+
+```{r}
+cpquery(bn, event = (contamina_su_modo == "no_contamina" | contamina_su_modo == "poco"), evidence = (tiene_auto == "si"), n = 10^6)
+```
+```{r}
+cpquery(bn, event = (contamina_su_modo == "no_contamina" | contamina_su_modo == "poco"), evidence = (tiene_auto == "no"), n = 10^6)
+```
+*La probabilidad de percibir su transporte como menos contaminante de las personas que tienen auto es 0.49 y de las personas que no tienen auto es de 0.41.Por lo que, las personas que tienen auto perciben su transporte como menos contaminante*
 
 
+## Cuarta Query
+# ¿Cuál es la probabilidad de que una persona en localidades entre 2,500 y 14,999 habitantes considere que el transporte público es eficiente y seguro?
+
+```{r}
+cpquery(bn, event = (tp_eficiente == "eficiente") & (tp_seguro == "seguro"), evidence = (tam_loc == "2500_14999"), n = 10^6)
+```
+*La probabilidad de que una persona en localidades entre 2,500 y 14,999 habitantes considere el transporte público eficiente y seguro es de 0.33. Por lo que, en poblaciones entre 2,500 y 14,999 habitantes 1 de cada 3 personas cree que su transporte público es seguro y eficiente*

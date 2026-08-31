@@ -1,7 +1,16 @@
 ---
-title: "mbn"
-format: html
+title: "Percepción del transporte público en México"
+subtitle: "Análisis de métodos de razonamiento e incertidumbre"
+format: 
+    html:
+        fontsize: 1.25em
+        html-math-method: katex
+        embed-resources: true
+        self-contained-math: true
+        df-print: kable
+editor: source
 ---
+
 
 ```{r}
 # Librerías necesarias
@@ -50,7 +59,7 @@ bl_bat <- expand.grid(from=bateria, to=bateria, stringsAsFactors=FALSE)
 bl_bat <- bl_bat[bl_bat$from != bl_bat$to, ]
 
 bl <- rbind(bl_capas, bl_t1, bl_bat)
-nrow(bl)
+nrow(bl) 
 ```
 ```{r}
 wl <- data.frame(
@@ -123,7 +132,9 @@ graphviz.plot(dag_cautiv)
 score(dag_cautiv, data = data, type = "bic")
 ```
 
-
+```{r}
+bn = bn.fit(dag, data =data, method = "mle")
+```
 
 
 

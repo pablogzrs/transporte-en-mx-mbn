@@ -19,131 +19,209 @@ library(bnlearn)
 
 ```{r}
 # Cargar los datos
-data <- read.csv("modelo_a.csv", row.names = 1,
-                 na.strings = c("", "NA"), stringsAsFactors = TRUE,
-                 fileEncoding = "UTF-8")
+data = read.csv(here::here("Data", "enmt_clean.csv"), row.names = 1,
+                na.strings = c("", "NA"), stringsAsFactors = TRUE,
+                fileEncoding = "UTF-8")
 head(data)
-```
-```{r}
-col4 <- c(masivo="masivo", camion="concesionado", colectivo="concesionado",
-          particular="particular", demanda="otro", activo="otro",
-          otros="otro", ninguno="otro")
+# Aquí se crean las 4 subagrupaciones, que resultan de las primeras 7 agrupaciones en la limpieza. 
+col4 = c(masivo = "masivo", camion = "concesionado", colectivo = "concesionado",
+         particular = "particular", demanda = "otro", activo = "otro",
+         otros = "otro", ninguno = "otro")
 
-data$modo_usado <- factor(col4[as.character(data$modo_principal)],
-                     levels = c("masivo","concesionado","particular","otro"))
-data$modo_principal <- NULL
+data$modo_usado = factor(col4[as.character(data$modo_principal)],
+                         levels = c("masivo", "concesionado", "particular", "otro"))
+data$modo_principal = NULL
 
-table(data$modo4)
+table(data$modo_usado)
 ```
-```{r}
-capas <- list(
-  c("sexo","edad","region","tam_loc","tiene_sistema_tren"),
+
+# 2. Modelos con distintas estructuras
+
+# MODELO BASE
+```{r capas}
+
+# Orden causal en seis capas:
+#   1. contexto territorial y atributos demográficos fijos
+#   2. escolaridad
+#   3. condición de actividad e ingreso familiar
+#   4. disponibilidad de automóvil
+#   5. modo utilizado
+#   6. evaluaciones del servicio
+
+# La lógica es que el nivel anterior causa al nivel posterios: escolaridad causa condición de actividad (empleado o no) y también el ingreso familiar
+
+capas = list(
+  c("sexo", "edad", "region", "tam_loc", "tiene_sistema_tren"),
   c("escolaridad"),
-  c("condicion_actividad","ingreso_familiar"),
+  c("condicion_actividad", "ingreso_familiar"),
   c("tiene_auto"),
   c("modo_usado"),
-  c("tp_eficiente","tp_rapido","tp_barato","tp_seguro","tp_comodo",
-    "contamina_su_modo","contamina_aire")
+  c("tp_eficiente", "tp_rapido", "tp_barato", "tp_seguro", "tp_comodo",
+    "contamina_su_modo", "contamina_aire")
 )
 
-bl_capas <- as.data.frame(tiers2blacklist(capas), stringsAsFactors = FALSE)
+# La lista negra para que todo arco siga la lógica que establecimos: de una capa posterior a una anterior. 
+bl_capas = as.data.frame(tiers2blacklist(capas), stringsAsFactors = FALSE)
 
-tier1 <- capas[[1]]
-bl_t1 <- expand.grid(from=tier1, to=tier1, stringsAsFactors=FALSE)
-bl_t1 <- bl_t1[bl_t1$from != bl_t1$to, ]
-bl_t1 <- bl_t1[!(bl_t1$from %in% c("region","tam_loc") &
+# Restricción adicional dentro para capa 1: los arcos que apuntan a tiene_sistema_tren, porque
+# esa variable es un atributo de la localidad (no de la persona) y sí puede
+# depender de región y tamaño de localidad.
+tier1 = capas[[1]]
+bl_t1 = expand.grid(from = tier1, to = tier1, stringsAsFactors = FALSE)
+bl_t1 = bl_t1[bl_t1$from != bl_t1$to, ]
+bl_t1 = bl_t1[!(bl_t1$from %in% c("region", "tam_loc") &
                  bl_t1$to == "tiene_sistema_tren"), ]
 
-bateria <- c("tp_eficiente","tp_rapido","tp_barato","tp_seguro","tp_comodo")
-bl_bat <- expand.grid(from=bateria, to=bateria, stringsAsFactors=FALSE)
-bl_bat <- bl_bat[bl_bat$from != bl_bat$to, ]
-
-bl <- rbind(bl_capas, bl_t1, bl_bat)
-nrow(bl) 
+# Las cinco variables de evaluación del servicio se guardan aparte porque el
+# tratamiento que reciben es lo que distingue al Modelo A del B.
+bateria = c("tp_eficiente", "tp_rapido", "tp_barato", "tp_seguro", "tp_comodo")
 ```
+
+# MODELO A
+
 ```{r}
-wl <- data.frame(
+# Supuesto: los cinco reactivos de evaluación son
+# respuestas condicionalmente independientes dadas sus causas comunes. Es decir,
+# se asume que la batería mide cinco atributos separables del servicio.
+
+# Se prohíben los 20 arcos posibles entre ellos.
+bl_bat = expand.grid(from = bateria, to = bateria, stringsAsFactors = FALSE)
+bl_bat = bl_bat[bl_bat$from != bl_bat$to, ]
+
+bl_a = rbind(bl_capas, bl_t1, bl_bat)
+nrow(bl_a)   # esperado: 142 arcos prohibidos
+
+## La lista blanca impone arcos que el algoritmo no puede eliminar. Los seis salen
+# de las preguntas de investigación:
+#
+#   modo_usado     -> tp_comodo          (consulta 1)
+#   modo_usado     -> contamina_su_modo  (consulta 3)
+#   tiene_auto     -> modo_usado         (si tiene auto evidentemente es uno de los modos que puede usar. No todos los que tienen auto reportan eso como su principal medio de transporte)
+#   tam_loc        -> tp_eficiente       (consulta 4
+#   sexo           -> tp_seguro          (consulta 2)
+#   contamina_aire -> contamina_su_modo  (Al evaluarse por primera vez el dag, el arco era al revés pero hace más sentido de esta forma)
+
+wl_a = data.frame(
   from = c("modo_usado", "modo_usado", "tiene_auto", "tam_loc", "sexo", "contamina_aire"),
   to   = c("tp_comodo", "contamina_su_modo", "modo_usado", "tp_eficiente",
            "tp_seguro", "contamina_su_modo"),
   stringsAsFactors = FALSE
 )
 
-dag <- hc(data, blacklist = bl, whitelist = wl)
-graphviz.plot(dag)
+# Algortimo hill climbing que halla el mejor DAG con nuetras restricciones
+dag_a = hc(data, blacklist = bl_a, whitelist = wl_a)
+graphviz.plot(dag_a)
 ```
 
-```{r}
-arc.strength(dag,data = data, criterion = "mi")
-```
-```{r}
-score(dag, data = data, type = "bic")
-```
-
+# MODELO B
 
 ```{r}
-score(dag, data = data, type = "aic")
-```
+# Supuesto: todo el efecto del nivel socioeconómico sobre la movilidad y
+# sobre la evaluación del servicio transita por la disponibilidad de automóvil
 
-```{r}
-best_dag = hc(data)
-```
+# Distinguimos clásica entre personas usuarias que usan el transporte público
+# por falta de alternativas y aquellos que sí lo eligen.
+nse   = c("escolaridad", "condicion_actividad", "ingreso_familiar")
+aguas = c("modo_usado", "tp_eficiente", "tp_rapido", "tp_barato",
+           "tp_seguro", "tp_comodo")
+bl_cuello = expand.grid(from = nse, to = aguas, stringsAsFactors = FALSE)
 
+# OJO: bl_bat NO se incluye. A diferencia del Modelo A, esta especificación sí
+# permite arcos entre los reactivos de evaluación. Ésa es la única restricción
+# que relaja respecto de A; en todo lo demás es MÁS restrictivo.
+bl_b = rbind(bl_capas, bl_t1, bl_cuello)
 
-```{r}
-graphviz.plot(best_dag)
-```
-```{r}
-score(best_dag, data = data, type = "bic")
-```
-```{r}
-score(best_dag, data = data, type = "aic")
-```
+# La lista blanca conserva los arcos obligatorios del modelo anterior que siguen aplicando y añade
+# los de tiene_auto hacia eficiencia y seguridad percibidas, ya que quien tiene vehículo puede
+# evaluar peor el transporte público aun sin utilizarlo.
 
-
-```{r}
-capas_cautiv <- list(
-  c("sexo","edad","region","tam_loc","tiene_sistema_tren"),
-  c("escolaridad"),
-  c("condicion_actividad","ingreso_familiar"),
-  c("tiene_auto"),
-  c("modo_usado"),
-  c("tp_eficiente","tp_rapido","tp_barato","tp_seguro","tp_comodo",
-    "contamina_su_modo","contamina_aire")
-)
-bl_c <- as.data.frame(tiers2blacklist(capas_cautiv), stringsAsFactors = FALSE)
-
-# el cuello de botella: nada socioeconómico llega directo a modo ni a percepciones
-nse   <- c("escolaridad","condicion_actividad","ingreso_familiar")
-aguas <- c("modo_usado","tp_eficiente","tp_rapido","tp_barato",
-           "tp_seguro","tp_comodo")
-bl_cuello <- expand.grid(from = nse, to = aguas, stringsAsFactors = FALSE)
-
-bl_c <- rbind(bl_c, bl_t1, bl_cuello)   # bl_t1 se reutiliza del modelo base
-
-wl_c <- data.frame(
-  from = c("tiene_auto","tiene_auto","tiene_auto","sexo","modo_usado"),
-  to   = c("modo_usado","tp_eficiente","tp_seguro","tp_seguro","contamina_su_modo"),
+wl_b = data.frame(
+  from = c("tiene_auto", "tiene_auto", "tiene_auto", "sexo", "modo_usado"),
+  to   = c("modo_usado", "tp_eficiente", "tp_seguro", "tp_seguro", "contamina_su_modo"),
   stringsAsFactors = FALSE
 )
 
-dag_cautiv <- hc(data, blacklist = bl_c, whitelist = wl_c)
-graphviz.plot(dag_cautiv)
-score(dag_cautiv, data = data, type = "bic")
+dag_b = hc(data, blacklist = bl_b, whitelist = wl_b)
+graphviz.plot(dag_b)
 ```
+
+# MODELO SIN RESTRICCIONES (HC PURO)
 
 ```{r}
-bn = bn.fit(dag, data =data, method = "mle")
+dag_c = hc(data)
+graphviz.plot(dag_c)
 ```
 
+# COMPARACIÓN BIC/AIC A vs B vs Sin restricciones
+
+```{r}
+comparacion = data.frame(
+  Modelo = c("A. Jerarquía por capas", "B. Cautividad", "C. Sin restricciones"),
+  BIC = c(score(dag_a, data, type = "bic"),
+          score(dag_b, data, type = "bic"),
+          score(dag_c, data, type = "bic")),
+  AIC = c(score(dag_a, data, type = "aic"),
+          score(dag_b, data, type = "aic"),
+          score(dag_c, data, type = "aic"))
+)
+comparacion
+
+# ¿Cuáles son las distancias entre modelos?
+mejor_menos_peor = comparacion$BIC[3] - comparacion$BIC[1]   
+segundo_mejor_menos_peor = comparacion$BIC[2] - comparacion$BIC[1]   
+mejor_menos_segundo_mejor <- mejor_menos_peor - segundo_mejor_menos_peor                        
+
+# Reparto de la distancia en BIC
+print(round(c(
+  total  = mejor_menos_peor,
+  A_a_B  = segundo_mejor_menos_peor,  # la distancia que "cuesta" el supuesto de percepciones de servicio condicionalmente independientes
+  B_a_C  = mejor_menos_segundo_mejor # el resto de la distancia
+), 1))
+
+# Porcentajes de la distancia del mejor al peor
+print(round(100 * c(
+  A_a_B = segundo_mejor_menos_peor,
+  B_a_C = mejor_menos_segundo_mejor
+) / mejor_menos_peor, 0))
+```
+
+# JUSTIFICACIÓN DE MODELO A
+
+Conservamos el Modelo A como modelo de consulta pese a tener el peor
+ajuste. Las restricciones del Modelo A se especificaron a priori, derivadas de las
+preguntas de investigación. El supuesto de independencia condicional de la batería afecta únicamente a las consultas que involucran probabilidades conjuntas variables de
+evaluación. Las tres primeras consultas no lo tocan. Como la cuarta sí, se reporta desde la frecuencia condicional observada, para comparar la discrepancia.
+
+# SIGNIFICANCIA DE ARCOS (RELACIONES DE DEPENDENCIAS)
+```{r}
+# Se utilizan tanto el criterio del mutual info como nuevamente el BIC
+arc.strength(dag_a, data = data, criterion = "mi")
+arc.strength(dag_a, data = data, criterion = "bic")
+```
+
+Las pruebas de indep. condicional muestran que la mayoría de los arcos del Modelo A son significativos, calvo sexo -> tp_seguro (p = impuesto por lista blanca para comprobar la percepción entre géneros y movilidad: los datos no sustentan esa dependencia.
+Además, el arco modo_usado -> contamina_su_modo, bajo el criterio mi, es de los mas fuertes, pero si se remueve, como establece el 
+criterio del BIC, el modelo mejoraría en alrededor de 80pts. Se decide mantener el arco puesto que es relevante para responder la 
+consulta 3. 
+
+# Ajuste de parámtros
+```{r}
+bn <- bn.fit(dag_a, data = data, method = "mle")
+
+# El Modelo B se ajusta también porque se usa en la validación de la consulta 4, para comparar
+# el efecto de relaciones de evaluacion de servicio cuando estas no están restringidas a ser condicionalmente independientes
+bn_b <- bn.fit(dag_b, data = data, method = "mle")
+```
+
+# Queries
 
 ## Primera Query
 # ¿Aquellas personas que utilizan cotidianamente el tren urbano lo perciben más cómodo de aquellas que utilizan cotidianamente el camión o microbús?
 
 ```{r}
 set.seed(67)
-cpquery(bn, event = (tp_comodo == "comodo"), evidence = (modo_usado == "masivo"), n = 10^6)
-cpquery(bn, event = (tp_comodo == "comodo"), evidence = (modo_usado == "concesionado"), n = 10^6)
+q1_1 = cpquery(bn, event = (tp_comodo == "comodo"), evidence = (modo_usado == "masivo"), n = 10^6)
+q1_2 = cpquery(bn, event = (tp_comodo == "comodo"), evidence = (modo_usado == "concesionado"), n = 10^6)
 ```
 
 *Se ve una diferencia significante entre como se califica la comodidad del transporte publico entre la gente que usa el tren (masivo) y la gente que usa camiones o microbuses (concesionado). La probabilidad de que una persona que viaja en tren califique al transporte publico como comodo es del 0.325, mientras que para los de camión o microbus es de 0.452*
@@ -153,8 +231,8 @@ cpquery(bn, event = (tp_comodo == "comodo"), evidence = (modo_usado == "concesio
 # ¿La percepción de seguridad en el transporte público difiere entre hombres y mujeres?
 
 ```{r}
-cpquery(bn, event = (tp_seguro == "seguro"), evidence = (sexo == "hombre"), n = 10^6)
-cpquery(bn, event = (tp_seguro == "seguro"), evidence = (sexo == "mujer"), n = 10^6)
+q2_1 = cpquery(bn, event = (tp_seguro == "seguro"), evidence = (sexo == "hombre"), n = 10^6)
+q2_2 = cpquery(bn, event = (tp_seguro == "seguro"), evidence = (sexo == "mujer"), n = 10^6)
 ```
 
 *Vemos que hay una pequeña diferencia entre la probabildad de que un hombre considere que el transporte público sea seguro y la que una mujer lo considere seguro. La probabilidad de que un hombre considere el transporte seguro es ligeramente más alta, aproximadamente 0.446 comparado al 0.447 de las mujeres*
@@ -164,11 +242,13 @@ cpquery(bn, event = (tp_seguro == "seguro"), evidence = (sexo == "mujer"), n = 1
 # ¿Quién tiene auto propio percibe su transporte como menos contaminante que quien no lo tiene?
 
 ```{r}
-cpquery(bn, event = (contamina_su_modo == "no_contamina" | contamina_su_modo == "poco"), evidence = (tiene_auto == "si"), n = 10^6)
+q3_1  = cpquery(bn, event = (contamina_su_modo == "no_contamina" | contamina_su_modo == "poco"), evidence = (tiene_auto == "si"), n = 10^6)
 ```
+
 ```{r}
-cpquery(bn, event = (contamina_su_modo == "no_contamina" | contamina_su_modo == "poco"), evidence = (tiene_auto == "no"), n = 10^6)
+q3_2 = cpquery(bn, event = (contamina_su_modo == "no_contamina" | contamina_su_modo == "poco"), evidence = (tiene_auto == "no"), n = 10^6)
 ```
+
 *La probabilidad de percibir su transporte como menos contaminante de las personas que tienen auto es 0.49 y de las personas que no tienen auto es de 0.41.Por lo que, las personas que tienen auto perciben su transporte como menos contaminante*
 
 
@@ -176,6 +256,82 @@ cpquery(bn, event = (contamina_su_modo == "no_contamina" | contamina_su_modo == 
 # ¿Cuál es la probabilidad de que una persona en localidades entre 2,500 y 14,999 habitantes considere que el transporte público es eficiente y seguro?
 
 ```{r}
-cpquery(bn, event = (tp_eficiente == "eficiente") & (tp_seguro == "seguro"), evidence = (tam_loc == "2500_14999"), n = 10^6)
+q4 = cpquery(bn, event = (tp_eficiente == "eficiente") & (tp_seguro == "seguro"), evidence = (tam_loc == "2500_14999"), n = 10^6)
 ```
 *La probabilidad de que una persona en localidades entre 2,500 y 14,999 habitantes considere el transporte público eficiente y seguro es de 0.33. Por lo que, en poblaciones entre 2,500 y 14,999 habitantes 1 de cada 3 personas cree que su transporte público es seguro y eficiente*
+
+# VALIDACIÓN Y ROBUSTEZ
+# ESTA SECCIÓN SE PLANTEÓ CON AYUDA DE LA IA CLAUDE. EL OBJETIVO ES DETERMINAR SI NUESTRO MODELO, CREADO CON CIERTAS DECISIONES ARBITRARIAS, A) ¿SE AJUSTA BIEN A LOS DATOS?, B) ¿LA ESTRUCTURA ES CONSISTENTE AL REMUESTREAR O SÓLO SE AJUSTA A LA MUESTRA ACTUAL?
+
+# CALIBRACIÓN VS FRECUENCIAS CONDICIONALES OBSERVADAS
+```{r}
+# Cada consulta se contrasta contra la proporción en los datos.
+# C1: la comparación de comodidad se condiciona ADEMÁS a las ciudades con sistema ferroviario, para separar el efecto de usar el metro del efecto de residir en una metrópoli (ZMG, ZMM, ZMVM) que lo tiene.
+
+con_tren    <- data[data$tiene_sistema_tren == "si", ]
+obs1_masivo <- mean(con_tren$tp_comodo[con_tren$modo_usado == "masivo"] == "comodo")
+obs1_conces <- mean(con_tren$tp_comodo[con_tren$modo_usado == "concesionado"] == "comodo")
+
+obs2_hombre <- mean(data$tp_seguro[data$sexo == "hombre"] == "seguro")
+obs2_mujer  <- mean(data$tp_seguro[data$sexo == "mujer"]  == "seguro")
+
+obs3_con <- mean(data$contamina_su_modo[data$tiene_auto == "si"] %in% c("no_contamina", "poco"))
+obs3_sin <- mean(data$contamina_su_modo[data$tiene_auto == "no"] %in% c("no_contamina", "poco"))
+
+semi <- data[data$tam_loc == "2500_14999", ]
+obs4 <- mean(semi$tp_eficiente == "eficiente" & semi$tp_seguro == "seguro")
+
+calibracion <- data.frame(
+  consulta  = c("C1 masivo", "C1 concesionado", "C2 hombre", "C2 mujer",
+                "C3 con auto", "C3 sin auto", "C4 conjunta"),
+  modelo    = c(q1_1, q1_2, q2_1, q2_2,
+                q3_1, q3_2, q4),
+  observado = c(obs1_masivo, obs1_conces, obs2_hombre, obs2_mujer,
+                obs3_con, obs3_sin, obs4)
+)
+calibracion$dif <- round(calibracion$modelo - calibracion$observado, 3)
+calibracion
+
+# Para confirmar el origen de la discrepancia de la C4, se corre la misma consulta  sobre el Modelo B, que sí libera los arcos entre # reactivos de evaluación.
+
+set.seed(42)
+q4_modelo_b <- cpquery(bn_b,
+                       event = (tp_eficiente == "eficiente") & (tp_seguro == "seguro"),
+                       evidence = (tam_loc == "2500_14999"), n = 500)
+
+c(modelo_A = q4, modelo_B = q4_modelo_b, observado = obs4)
+
+```
+
+La calibración contrasta cada consulta contra la proporción en los datos. Como BIC premia el ajuste global, un modelo puede puntuar bien y aun así devolver probabilidades desviadas en consultas concretas; esto lo detecta. Las consultas 2 y 3 coinciden con lo observado. La 1 conserva la dirección, pero sobreestima al concesionado (0.45 contra 0.38),
+porque tp_comodo tiene a modo_usado como único progenitor. La 4 subestima en los cuatro estratos: 0.33 contra 0.53 observado. Para ubicar el origen de esa discrepancia se repite la misma consulta sobre el Modelo B, que sí permite arcos
+entre reactivos de evaluación; la cifra sube a 0.41, lo que confirma que el sesgo viene del supuesto de la batería y no de otra parte del modelo. Por eso la respuesta a la consulta 4 se reporta desde la frecuencia observada.
+
+# BOOTSTRAP NO PARAMÉTRICO
+```{r}
+set.seed(42)
+str_boot = boot.strength(data, R = 500, algorithm = "hc",
+                          algorithm.args = list(blacklist = bl_a, whitelist = wl_a))
+
+# strength  = frecuencia con la que aparece el arco 
+# direction = frecuencia de la direccion de ese arco en específico 
+
+arcos_a    =  as.data.frame(arcs(dag_a), stringsAsFactors = FALSE)
+estabilidad = merge(arcos_a, str_boot, by = c("from", "to"), all.x = TRUE)
+estabilidad = estabilidad[order(-estabilidad$strength), ]
+estabilidad
+
+print(c(
+  arcos_totales = nrow(estabilidad),
+  sobre_0.66    = sum(estabilidad$strength >= 0.66, na.rm = TRUE),
+  sobre_0.96    = sum(estabilidad$strength > 0.96, na.rm = TRUE)
+))
+
+# Comparación de arco débil vs arco débil más frecuente 
+subset(str_boot,
+       (from == "tiene_sistema_tren" & to == "tp_seguro") |
+       (from == "contamina_aire"     & to == "tp_seguro"))
+```
+
+El bootstrap remuestrea los datos 500 veces con reemplazo y en cada réplica reaprende la estructura completa con las mismas restricciones del Modelo A. 13 de los 14 arcos aparecen en al menos dos terceras partes de las réplicas y 10 en más del 96%. El que no, tiene_sistema_tren -> tp_seguro, aparece apenas en el 35%, pese a que su prueba de independencia condicional en la muestra completa sale significativa (léase seccion de significancia de relaciones), de lo que se puede concluir que el modelo es en en general, robusto, salvo por ese arco que sí sale de esta muestra en particular. Es interesante como tp_seguro tiene un "camino alternativo" que no se consideró al plantear el modelo, que viene desde contamina_aire, lo cual parece no tener mucho sentido. 
+
